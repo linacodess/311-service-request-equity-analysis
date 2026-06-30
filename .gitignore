@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local environments
+.venv/
+venv/
+env/
+
+# Local/editor files
+.DS_Store
+.idea/
+.vscode/
+
+# Keep large raw datasets out of GitHub.
+data/raw/*
+!data/raw/.gitkeep
+
+# Generated analysis artifacts
+outputs/
+
+# Temporary files
+*.log
+tmp/

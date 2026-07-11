@@ -53,10 +53,11 @@ class CaseSorter:
         return scored
 
     def sort_by_urgency(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Sort by urgency first, then by longest-open cases within each urgency level."""
+        """Keep ranked categories, then sort by urgency and days open."""
         self._require_columns(df, ["Category", "days_open"])
-        self._require_numeric_days_open(df)
-        scored = self.add_urgency_scores(df)
+        ranked = self.filter_ranked_categories(df)
+        self._require_numeric_days_open(ranked)
+        scored = self.add_urgency_scores(ranked)
         return scored.sort_values(
             ["urgency_score", "days_open"],
             ascending=[True, False],
@@ -66,22 +67,13 @@ class CaseSorter:
     def sort_by_fair_service_queue(
         self,
         df: pd.DataFrame,
-        urgency_weight: float = 10.0,
-        days_open_weight: float = 0.25,
-        neighborhood_boost_weight: float = 1.0,
-        max_neighborhood_boost: float = 5.0,
     ) -> pd.DataFrame:
-        """Sort cases using urgency, days open, and neighborhood delay fairness."""
+        """Keep ranked categories, then sort by urgency, days open, and delay fairness."""
         self._require_columns(df, ["Category", "Neighborhood", "days_open"])
-        self._require_numeric_days_open(df)
-        self._require_non_negative_weights(
-            urgency_weight=urgency_weight,
-            days_open_weight=days_open_weight,
-            neighborhood_boost_weight=neighborhood_boost_weight,
-            max_neighborhood_boost=max_neighborhood_boost,
-        )
 
-        queued = self.add_urgency_scores(df)
+        ranked = self.filter_ranked_categories(df)
+        self._require_numeric_days_open(ranked)
+        queued = self.add_urgency_scores(ranked)
         valid_days_open = queued["days_open"].dropna()
         if valid_days_open.empty:
             raise ValueError("days_open must contain at least one non-null value.")
@@ -89,21 +81,13 @@ class CaseSorter:
         citywide_avg_days_open = float(valid_days_open.mean())
         neighborhood_avg_days_open = queued.groupby("Neighborhood")["days_open"].transform("mean")
         delay_gap = (neighborhood_avg_days_open - citywide_avg_days_open).clip(lower=0).fillna(0)
-        neighborhood_delay_boost = (delay_gap * neighborhood_boost_weight).clip(upper=max_neighborhood_boost)
-
-        max_rank = max(self.urgency_ranking.values())
-        urgency_component = (max_rank - queued["urgency_score"] + 1) * urgency_weight
-        days_open_component = queued["days_open"].fillna(0) * days_open_weight
 
         queued["neighborhood_avg_days_open"] = neighborhood_avg_days_open.round(2)
-        queued["neighborhood_delay_boost"] = neighborhood_delay_boost.round(2)
-        queued["fair_queue_score"] = (
-            urgency_component + days_open_component + neighborhood_delay_boost
-        ).round(2)
+        queued["neighborhood_delay_boost"] = delay_gap.round(2)
 
         return queued.sort_values(
-            ["fair_queue_score", "urgency_score", "days_open"],
-            ascending=[False, True, False],
+            ["urgency_score", "neighborhood_delay_boost", "days_open"],
+            ascending=[True, False, False],
             na_position="last",
         ).reset_index(drop=True)
 

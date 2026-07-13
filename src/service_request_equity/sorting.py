@@ -102,9 +102,3 @@ class CaseSorter:
     def _require_numeric_days_open(df: pd.DataFrame) -> None:
         if not pd.api.types.is_numeric_dtype(df["days_open"]):
             raise ValueError("days_open must be numeric.")
-
-    @staticmethod
-    def _require_non_negative_weights(**weights: float) -> None:
-        for name, value in weights.items():
-            if value < 0:
-                raise ValueError(f"{name} must be non-negative.")

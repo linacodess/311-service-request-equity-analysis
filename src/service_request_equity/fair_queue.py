@@ -1,4 +1,4 @@
-"""Live priority queue for fair 311 service request handling."""
+"""Live priority queue for 311 service request handling."""
 
 from __future__ import annotations
 
@@ -8,145 +8,120 @@ from typing import Any
 
 import pandas as pd
 
-from service_request_equity.sorting import CaseSorter, DEFAULT_URGENCY_RANKING
+from service_request_equity.sorting import CaseSorter
 
 
 class FairServiceQueue:
-    """Heap-backed live queue for service requests."""
+    """Manage active, treated, and deleted requests in a heap-backed queue."""
 
     def __init__(
         self,
+        requests_df: pd.DataFrame | None = None,
         urgency_ranking: dict[str, int] | None = None,
-        urgency_weight: float = 10.0,
-        days_open_weight: float = 0.25,
-        neighborhood_boost_weight: float = 1.0,
-        max_neighborhood_boost: float = 5.0,
+        case_id_column: str = "CaseID",
     ) -> None:
-        CaseSorter._require_non_negative_weights(
-            urgency_weight=urgency_weight,
-            days_open_weight=days_open_weight,
-            neighborhood_boost_weight=neighborhood_boost_weight,
-            max_neighborhood_boost=max_neighborhood_boost,
-        )
-        self.urgency_ranking = urgency_ranking or DEFAULT_URGENCY_RANKING.copy()
-        self.urgency_weight = urgency_weight
-        self.days_open_weight = days_open_weight
-        self.neighborhood_boost_weight = neighborhood_boost_weight
-        self.max_neighborhood_boost = max_neighborhood_boost
-        self.neighborhood_avg_days_open: dict[str, float] = {}
-        self.citywide_avg_days_open: float | None = None
-        self._heap: list[tuple[float, int, float, int, dict[str, Any]]] = []
+        self.sorter = CaseSorter(urgency_ranking)
+        self.case_id_column = case_id_column
+        if requests_df is None:
+            self.active_requests = pd.DataFrame()
+        else:
+            self.active_requests = requests_df.copy().reset_index(drop=True)
+            self._require_case_id_column(self.active_requests)
+        self.treated_requests = pd.DataFrame()
+        self.deleted_requests = pd.DataFrame()
+        self._heap: list[tuple[int, float, int, dict[str, Any]]] = []
         self._counter = count()
+        self._rebuild_heap()
 
     def __len__(self) -> int:
         return len(self._heap)
 
-    def load_historical_delays(self, df: pd.DataFrame) -> None:
-        """Load neighborhood delay averages used for fairness boosts."""
-        CaseSorter._require_columns(df, ["Neighborhood", "days_open"])
-        CaseSorter._require_numeric_days_open(df)
-        valid = df.dropna(subset=["Neighborhood", "days_open"])
-        if valid.empty:
-            raise ValueError("Historical delay data must contain at least one valid row.")
-
-        self.citywide_avg_days_open = float(valid["days_open"].mean())
-        self.neighborhood_avg_days_open = valid.groupby("Neighborhood")["days_open"].mean().to_dict()
-        self._rebuild_heap()
-
-    def update_neighborhood_delay(
-        self,
-        neighborhood: str,
-        avg_days_open: float,
-        citywide_avg_days_open: float | None = None,
-    ) -> None:
-        """Update delay statistics and refresh queued request priorities."""
-        if avg_days_open < 0:
-            raise ValueError("avg_days_open must be non-negative.")
-        if citywide_avg_days_open is not None and citywide_avg_days_open < 0:
-            raise ValueError("citywide_avg_days_open must be non-negative.")
-
-        self.neighborhood_avg_days_open[neighborhood] = float(avg_days_open)
-        if citywide_avg_days_open is not None:
-            self.citywide_avg_days_open = float(citywide_avg_days_open)
-        self._rebuild_heap()
-
     def add_request(self, request: dict[str, Any]) -> None:
-        """Add one request to the live priority queue."""
-        scored = self._score_request(request)
-        heapq.heappush(self._heap, self._heap_entry(scored))
-
-    def pop_next_request(self) -> dict[str, Any]:
-        """Remove and return the highest-priority request."""
-        if not self._heap:
-            raise IndexError("pop from empty FairServiceQueue")
-        return heapq.heappop(self._heap)[-1].copy()
+        """Add a request to the active queue and refresh priorities."""
+        self._require_case_id(request)
+        self.active_requests = self._append_request(self.active_requests, request)
+        self._rebuild_heap()
 
     def peek_next_request(self) -> dict[str, Any]:
-        """Return the highest-priority request without removing it."""
+        """Return the highest-priority active request without removing it."""
         if not self._heap:
             raise IndexError("peek from empty FairServiceQueue")
         return self._heap[0][-1].copy()
 
-    def _score_request(self, request: dict[str, Any]) -> dict[str, Any]:
-        missing = [column for column in ["Category", "Neighborhood", "days_open"] if column not in request]
-        if missing:
-            missing_display = ", ".join(missing)
-            raise KeyError(f"Missing required field(s): {missing_display}")
+    def pop_next_request(self) -> dict[str, Any]:
+        """Treat and remove the highest-priority active request."""
+        next_request = self.peek_next_request()
+        return self.mark_treated(next_request[self.case_id_column])
 
-        category = request["Category"]
-        if category not in self.urgency_ranking:
-            raise ValueError(f"Category missing urgency ranking: {category}")
+    def mark_treated(self, case_id: Any) -> dict[str, Any]:
+        """Move a request from active to treated requests."""
+        request = self._remove_active_request(case_id)
+        self.treated_requests = self._append_request(self.treated_requests, request)
+        self._rebuild_heap()
+        return request.copy()
 
-        days_open_value = pd.to_numeric(pd.Series([request["days_open"]]), errors="coerce").iloc[0]
-        if pd.isna(days_open_value):
-            raise ValueError("days_open must be numeric.")
-        days_open = float(days_open_value)
-        if days_open < 0:
-            raise ValueError("days_open must be non-negative.")
+    def delete_request(self, case_id: Any) -> dict[str, Any]:
+        """Move a request from active to deleted requests."""
+        request = self._remove_active_request(case_id)
+        self.deleted_requests = self._append_request(self.deleted_requests, request)
+        self._rebuild_heap()
+        return request.copy()
 
-        neighborhood = request["Neighborhood"]
-        neighborhood_avg = self.neighborhood_avg_days_open.get(neighborhood)
-        neighborhood_delay_boost = 0.0
-        if neighborhood_avg is not None and self.citywide_avg_days_open is not None:
-            delay_gap = max(neighborhood_avg - self.citywide_avg_days_open, 0)
-            neighborhood_delay_boost = min(
-                delay_gap * self.neighborhood_boost_weight,
-                self.max_neighborhood_boost,
-            )
+    def queue_dataframe(self) -> pd.DataFrame:
+        """Return active requests in queue order with urgency scores."""
+        return self._rank_active_requests()
 
-        urgency_score = self.urgency_ranking[category]
-        max_rank = max(self.urgency_ranking.values())
-        fair_queue_score = (
-            (max_rank - urgency_score + 1) * self.urgency_weight
-            + days_open * self.days_open_weight
-            + neighborhood_delay_boost
-        )
+    def _rebuild_heap(self) -> None:
+        self._heap = []
+        self._counter = count()
 
-        scored = request.copy()
-        scored["urgency_score"] = urgency_score
-        scored["neighborhood_avg_days_open"] = (
-            round(neighborhood_avg, 2) if neighborhood_avg is not None else None
-        )
-        scored["neighborhood_delay_boost"] = round(neighborhood_delay_boost, 2)
-        scored["fair_queue_score"] = round(fair_queue_score, 2)
-        return scored
+        ranked = self._rank_active_requests()
+        for request in ranked.to_dict(orient="records"):
+            heapq.heappush(self._heap, self._heap_entry(request))
 
-    def _heap_entry(
-        self,
-        request: dict[str, Any],
-    ) -> tuple[float, int, float, int, dict[str, Any]]:
+    def _rank_active_requests(self) -> pd.DataFrame:
+        if self.active_requests.empty:
+            return self.active_requests.copy()
+
+        try:
+            return self.sorter.sort_by_urgency(self.active_requests)
+        except ValueError as exc:
+            if str(exc) == "No rows match the configured urgency ranking.":
+                return self.active_requests.iloc[0:0].copy()
+            raise
+
+    def _heap_entry(self, request: dict[str, Any]) -> tuple[int, float, int, dict[str, Any]]:
+        days_open = request["days_open"]
+        days_open_priority = float("inf") if pd.isna(days_open) else -float(days_open)
         return (
-            -request["fair_queue_score"],
-            request["urgency_score"],
-            -float(request["days_open"]),
+            int(request["urgency_score"]),
+            days_open_priority,
             next(self._counter),
             request,
         )
 
-    def _rebuild_heap(self) -> None:
-        requests = [entry[-1] for entry in self._heap]
-        self._heap = []
-        self._counter = count()
-        for request in requests:
-            scored = self._score_request(request)
-            heapq.heappush(self._heap, self._heap_entry(scored))
+    def _remove_active_request(self, case_id: Any) -> dict[str, Any]:
+        self._require_case_id_column(self.active_requests)
+        matches = self.active_requests[self.case_id_column] == case_id
+        match_count = int(matches.sum())
+
+        if match_count == 0:
+            raise KeyError(f"Active request not found: {case_id}")
+        if match_count > 1:
+            raise ValueError(f"Multiple active requests found for case id: {case_id}")
+
+        request = self.active_requests.loc[matches].iloc[0].to_dict()
+        self.active_requests = self.active_requests.loc[~matches].reset_index(drop=True)
+        return request
+
+    def _require_case_id(self, request: dict[str, Any]) -> None:
+        if self.case_id_column not in request:
+            raise KeyError(f"Missing required field: {self.case_id_column}")
+
+    def _require_case_id_column(self, df: pd.DataFrame) -> None:
+        if self.case_id_column not in df.columns:
+            raise KeyError(f"Missing required column: {self.case_id_column}")
+
+    @staticmethod
+    def _append_request(df: pd.DataFrame, request: dict[str, Any]) -> pd.DataFrame:
+        return pd.concat([df, pd.DataFrame([request])], ignore_index=True)

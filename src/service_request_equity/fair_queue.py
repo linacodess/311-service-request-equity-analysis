@@ -8,6 +8,7 @@ from typing import Any
 
 import pandas as pd
 
+from service_request_equity.delay_tracker import DelayTracker
 from service_request_equity.sorting import CaseSorter
 
 
@@ -18,9 +19,11 @@ class FairServiceQueue:
         self,
         requests_df: pd.DataFrame | None = None,
         urgency_ranking: dict[str, int] | None = None,
+        delay_tracker: DelayTracker | None = None,
         case_id_column: str = "CaseID",
     ) -> None:
         self.sorter = CaseSorter(urgency_ranking)
+        self.delay_tracker = delay_tracker
         self.case_id_column = case_id_column
         if requests_df is None:
             self.active_requests = pd.DataFrame()
@@ -29,7 +32,7 @@ class FairServiceQueue:
             self._require_case_id_column(self.active_requests)
         self.treated_requests = pd.DataFrame()
         self.deleted_requests = pd.DataFrame()
-        self._heap: list[tuple[int, float, int, dict[str, Any]]] = []
+        self._heap: list[tuple[int, float, float, int, dict[str, Any]]] = []
         self._counter = count()
         self._rebuild_heap()
 
@@ -84,21 +87,39 @@ class FairServiceQueue:
             return self.active_requests.copy()
 
         try:
-            return self.sorter.sort_by_urgency(self.active_requests)
+            if self.delay_tracker is None:
+                return self.sorter.sort_by_urgency(self.active_requests)
+
+            active_with_boosts = self._add_delay_boosts(self.active_requests)
+            return self.sorter.sort_by_fair_service_queue(active_with_boosts)
         except ValueError as exc:
             if str(exc) == "No rows match the configured urgency ranking.":
                 return self.active_requests.iloc[0:0].copy()
             raise
 
-    def _heap_entry(self, request: dict[str, Any]) -> tuple[int, float, int, dict[str, Any]]:
+    def _heap_entry(self, request: dict[str, Any]) -> tuple[int, float, float, int, dict[str, Any]]:
+        delay_boost = request.get("neighborhood_delay_boost", 0)
+        delay_boost_priority = -float(delay_boost)
         days_open = request["days_open"]
         days_open_priority = float("inf") if pd.isna(days_open) else -float(days_open)
         return (
             int(request["urgency_score"]),
+            delay_boost_priority,
             days_open_priority,
             next(self._counter),
             request,
         )
+
+    def _add_delay_boosts(self, df: pd.DataFrame) -> pd.DataFrame:
+        boosted = df.copy()
+        if self.delay_tracker is None:
+            boosted["neighborhood_delay_boost"] = 0.0
+            return boosted
+
+        boosted["neighborhood_delay_boost"] = boosted["Neighborhood"].map(
+            self.delay_tracker.get_neighborhood_boost
+        )
+        return boosted
 
     def _remove_active_request(self, case_id: Any) -> dict[str, Any]:
         self._require_case_id_column(self.active_requests)

@@ -69,21 +69,17 @@ class CaseSorter:
         df: pd.DataFrame,
     ) -> pd.DataFrame:
         """Keep ranked categories, then sort by urgency, days open, and delay fairness."""
-        self._require_columns(df, ["Category", "Neighborhood", "days_open"])
+        self._require_columns(df, ["Category", "Neighborhood", "days_open", "neighborhood_delay_boost"])
 
         ranked = self.filter_ranked_categories(df)
         self._require_numeric_days_open(ranked)
         queued = self.add_urgency_scores(ranked)
-        valid_days_open = queued["days_open"].dropna()
-        if valid_days_open.empty:
-            raise ValueError("days_open must contain at least one non-null value.")
-
-        citywide_avg_days_open = float(valid_days_open.mean())
-        neighborhood_avg_days_open = queued.groupby("Neighborhood")["days_open"].transform("mean")
-        delay_gap = (neighborhood_avg_days_open - citywide_avg_days_open).clip(lower=0).fillna(0)
-
-        queued["neighborhood_avg_days_open"] = neighborhood_avg_days_open.round(2)
-        queued["neighborhood_delay_boost"] = delay_gap.round(2)
+        queued["neighborhood_delay_boost"] = (
+            pd.to_numeric(queued["neighborhood_delay_boost"], errors="coerce")
+            .fillna(0)
+            .clip(lower=0)
+            .round(2)
+        )
 
         return queued.sort_values(
             ["urgency_score", "neighborhood_delay_boost", "days_open"],

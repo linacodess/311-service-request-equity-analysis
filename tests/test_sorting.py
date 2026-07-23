@@ -60,6 +60,33 @@ class TestCaseSorter(unittest.TestCase):
         with self.assertRaises(ValueError):
             CaseSorter().sort_by_urgency(df)
 
+    def test_fair_service_queue_uses_provided_delay_boost(self) -> None:
+        df = pd.DataFrame(
+            {
+                "Category": ["Needle Pickup", "Needle Pickup"],
+                "Neighborhood": ["Roxbury", "Dorchester"],
+                "days_open": [1, 10],
+                "neighborhood_delay_boost": [5, 0],
+            }
+        )
+
+        result = CaseSorter().sort_by_fair_service_queue(df)
+
+        self.assertEqual(result["Neighborhood"].tolist(), ["Roxbury", "Dorchester"])
+        self.assertEqual(result["neighborhood_delay_boost"].tolist(), [5, 0])
+
+    def test_fair_service_queue_requires_delay_boost(self) -> None:
+        df = pd.DataFrame(
+            {
+                "Category": ["Needle Pickup"],
+                "Neighborhood": ["Dorchester"],
+                "days_open": [1],
+            }
+        )
+
+        with self.assertRaises(KeyError):
+            CaseSorter().sort_by_fair_service_queue(df)
+
 
 if __name__ == "__main__":
     unittest.main()

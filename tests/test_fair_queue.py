@@ -6,6 +6,7 @@ import unittest
 
 import pandas as pd
 
+from service_request_equity.delay_tracker import DelayTracker
 from service_request_equity.fair_queue import FairServiceQueue
 
 
@@ -71,6 +72,31 @@ class TestFairServiceQueue(unittest.TestCase):
 
         self.assertEqual(len(queue), 0)
         self.assertTrue(queue.queue_dataframe().empty)
+
+    def test_delay_tracker_boost_breaks_urgency_ties(self) -> None:
+        tracker = DelayTracker()
+        tracker.refresh(
+            pd.DataFrame(
+                {
+                    "Neighborhood": ["Roxbury", "Dorchester"],
+                    "days_open": [20, 1],
+                }
+            )
+        )
+        queue = FairServiceQueue(
+            pd.DataFrame(
+                {
+                    "CaseID": [201, 202],
+                    "Category": ["Needle Pickup", "Needle Pickup"],
+                    "Neighborhood": ["Dorchester", "Roxbury"],
+                    "days_open": [10, 1],
+                }
+            ),
+            delay_tracker=tracker,
+        )
+
+        self.assertEqual(queue.peek_next_request()["CaseID"], 202)
+        self.assertEqual(queue.queue_dataframe()["neighborhood_delay_boost"].tolist(), [9.5, 0.0])
 
 
 if __name__ == "__main__":

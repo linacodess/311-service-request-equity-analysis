@@ -26,7 +26,7 @@ At first, the queue focused on urgency and case duration. That helped show which
 - Tracks neighborhood delay boosts separately with a `DelayTracker`
 - Creates map-based visualizations of service requests
 - Compares resolution patterns across neighborhoods
-- Identifies neighborhoods with above-average case delays
+- Identifies neighborhoods with the longest average service delays
 - Exports summaries and charts for further analysis
 
 ## Initial Priority Ranking
@@ -106,7 +106,7 @@ PYTHONPATH=src python -m service_request_equity \
 The program creates:
 
 - `summary.json`
-- `neighborhood_summary.csv`
+- `neighborhood_delay_summary.csv`
 - `category_summary.csv`
 - `case_map.png`
 - `neighborhood_delays.png`
@@ -115,5 +115,5 @@ The program creates:
 ## Tests
 
 ```bash
-PYTHONPATH=src python -m unittest discover -s tests
+pytest
 ```

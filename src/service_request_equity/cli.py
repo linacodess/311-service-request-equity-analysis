@@ -34,13 +34,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--top-n",
         type=int,
-        default=10,
-        help="Number of top neighborhoods/categories to include in outputs.",
+        default=25,
+        help="Number of top neighborhoods/categories to include in outputs. Defaults to 25.",
     )
     return parser
 
 
-def run_analysis(data_path: str | Path, output_dir: str | Path, limit: int | None = None, top_n: int = 10) -> dict[str, Any]:
+def run_analysis(data_path: str | Path, output_dir: str | Path, limit: int | None = None, top_n: int = 25) -> dict[str, Any]:
     """Run the complete analysis workflow and return generated artifact paths."""
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
@@ -53,34 +53,30 @@ def run_analysis(data_path: str | Path, output_dir: str | Path, limit: int | Non
     sorted_df = sorter.sort_by_urgency(ranked_df)
 
     analyzer = NeighborhoodAnalyzer(sorted_df)
-    neighborhood_summary = analyzer.neighborhood_volume_summary()
+    neighborhood_delay_summary = analyzer.neighborhood_delay_summary()
     category_summary = analyzer.category_duration_summary()
-    equity_scores = analyzer.equity_priority_scores()
     snapshot = analyzer.equity_snapshot(top_n=top_n)
 
     summary_payload = {
         "dataset": loader.get_basic_stats(),
         "urgency_ranking": sorter.urgency_ranking,
         "snapshot": snapshot,
-        "neighborhood_summary": neighborhood_summary.head(top_n).to_dict(orient="records"),
+        "neighborhood_delay_summary": neighborhood_delay_summary.head(top_n).to_dict(orient="records"),
         "category_summary": category_summary.head(top_n).to_dict(orient="records"),
-        "equity_priority_scores": equity_scores.head(top_n).to_dict(orient="records"),
     }
 
     summary_path = output / "summary.json"
     summary_path.write_text(json.dumps(summary_payload, indent=2), encoding="utf-8")
 
-    neighborhood_csv_path = output / "neighborhood_summary.csv"
+    neighborhood_csv_path = output / "neighborhood_delay_summary.csv"
     category_csv_path = output / "category_summary.csv"
-    equity_csv_path = output / "equity_priority_scores.csv"
-    neighborhood_summary.to_csv(neighborhood_csv_path, index=False)
+    neighborhood_delay_summary.to_csv(neighborhood_csv_path, index=False)
     category_summary.to_csv(category_csv_path, index=False)
-    equity_scores.to_csv(equity_csv_path, index=False)
 
     visualizer = Visualizer(sorted_df)
     map_path = visualizer.plot_case_map(output / "case_map.png")
     neighborhood_path = visualizer.plot_neighborhood_delays(
-        neighborhood_summary,
+        neighborhood_delay_summary,
         output / "neighborhood_delays.png",
         top_n=top_n,
     )
@@ -97,7 +93,6 @@ def run_analysis(data_path: str | Path, output_dir: str | Path, limit: int | Non
         "category_durations_path": str(category_path),
         "neighborhood_csv_path": str(neighborhood_csv_path),
         "category_csv_path": str(category_csv_path),
-        "equity_csv_path": str(equity_csv_path),
         "snapshot": snapshot,
     }
 
@@ -119,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Average days open: {snapshot['avg_days_open']}")
     print(f"Summary: {result['summary_path']}")
     print(f"Map: {result['map_path']}")
+    print(f"Neighborhood delay CSV: {result['neighborhood_csv_path']}")
     print(f"Neighborhood chart: {result['neighborhood_delays_path']}")
     print(f"Category chart: {result['category_durations_path']}")
-    print(f"Equity score CSV: {result['equity_csv_path']}")
     return 0

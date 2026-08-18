@@ -19,9 +19,8 @@ class TestCliWorkflow(unittest.TestCase):
 
             expected_files = [
                 output / "summary.json",
-                output / "neighborhood_summary.csv",
+                output / "neighborhood_delay_summary.csv",
                 output / "category_summary.csv",
-                output / "equity_priority_scores.csv",
                 output / "case_map.png",
                 output / "neighborhood_delays.png",
                 output / "category_durations.png",
@@ -31,7 +30,8 @@ class TestCliWorkflow(unittest.TestCase):
                 self.assertTrue(path.exists(), f"Missing expected output: {path}")
                 self.assertGreater(path.stat().st_size, 0)
 
-            self.assertIn("equity_csv_path", result)
+            self.assertIn("neighborhood_csv_path", result)
+            self.assertFalse((output / "equity_priority_scores.csv").exists())
 
 
 if __name__ == "__main__":

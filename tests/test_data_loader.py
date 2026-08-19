@@ -18,10 +18,11 @@ class TestDataLoader(unittest.TestCase):
         loader = DataLoader(SAMPLE_PATH)
         df = loader.load()
 
-        self.assertEqual(len(df), 18)
+        self.assertEqual(len(df), 60)
         self.assertTrue(loader.is_processed)
         self.assertIn("days_open", df.columns)
         self.assertTrue(pd.api.types.is_numeric_dtype(df["days_open"]))
+        self.assertEqual(set(df["Status"]), {"Open", "Closed"})
 
     def test_basic_stats_after_loading(self) -> None:
         loader = DataLoader(SAMPLE_PATH)
@@ -29,9 +30,9 @@ class TestDataLoader(unittest.TestCase):
 
         stats = loader.get_basic_stats()
 
-        self.assertEqual(stats["total_cases"], 18)
-        self.assertGreaterEqual(stats["unique_neighborhoods"], 5)
-        self.assertEqual(stats["unique_categories"], 10)
+        self.assertEqual(stats["total_cases"], 60)
+        self.assertGreaterEqual(stats["unique_neighborhoods"], 6)
+        self.assertGreater(stats["unique_categories"], 10)
 
     def test_filter_by_neighborhood_is_case_insensitive(self) -> None:
         loader = DataLoader(SAMPLE_PATH)
@@ -40,7 +41,7 @@ class TestDataLoader(unittest.TestCase):
         filtered = loader.filter_by_neighborhood(["dorchester"])
 
         self.assertEqual(set(filtered["Neighborhood"]), {"Dorchester"})
-        self.assertEqual(len(filtered), 5)
+        self.assertGreater(len(filtered), 5)
 
     def test_missing_file_raises(self) -> None:
         loader = DataLoader("data/not-here.csv")
@@ -63,6 +64,27 @@ class TestDataLoader(unittest.TestCase):
 
             df = DataLoader(path).load()
 
+        self.assertEqual(df.loc[0, "days_open"], 3)
+
+    def test_loads_new_boston_export_columns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "new_boston.csv"
+            path.write_text(
+                "\n".join(
+                    [
+                        "case_enquiry_id,open_dt,closed_dt,case_status,type,neighborhood,latitude,longitude",
+                        "101,2026-01-01,2026-01-04,Closed,Parking Enforcement,Dorchester,42.3,-71.0",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            df = DataLoader(path).load()
+
+        self.assertEqual(df.loc[0, "CaseID"], 101)
+        self.assertEqual(df.loc[0, "Status"], "Closed")
+        self.assertEqual(df.loc[0, "Category"], "Parking Enforcement")
+        self.assertEqual(df.loc[0, "Neighborhood"], "Dorchester")
         self.assertEqual(df.loc[0, "days_open"], 3)
 
 

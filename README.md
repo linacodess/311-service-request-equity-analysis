@@ -111,6 +111,7 @@ The program creates:
 - `case_map.png`
 - `neighborhood_delays.png`
 - `category_durations.png`
+- `fair_queue_preview.html`
 
 ## Tests
 

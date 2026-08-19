@@ -41,6 +41,7 @@ class DataLoader:
         if df.empty:
             raise ValueError("CSV loaded successfully but contains no rows.")
 
+        df = self._normalize_boston_columns(df)
         self._validate_columns(df)
         cleaned = self._clean_core_fields(df)
         self.df = cleaned
@@ -80,6 +81,25 @@ class DataLoader:
         if missing:
             missing_display = ", ".join(missing)
             raise KeyError(f"Missing required column(s): {missing_display}")
+
+    @staticmethod
+    def _normalize_boston_columns(df: pd.DataFrame) -> pd.DataFrame:
+        """Support both the original sample columns and Boston's newer export columns."""
+        column_mapping = {
+            "case_enquiry_id": "CaseID",
+            "case_status": "Status",
+            "type": "Category",
+            "neighborhood": "Neighborhood",
+            "latitude": "Latitude",
+            "longitude": "Longitude",
+            "open_dt": "OpenedDate",
+            "closed_dt": "ClosedDate",
+        }
+        normalized = df.copy()
+        for source, target in column_mapping.items():
+            if source in normalized.columns and target not in normalized.columns:
+                normalized[target] = normalized[source]
+        return normalized
 
     @staticmethod
     def _clean_core_fields(df: pd.DataFrame) -> pd.DataFrame:

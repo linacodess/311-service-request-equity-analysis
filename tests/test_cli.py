@@ -24,6 +24,7 @@ class TestCliWorkflow(unittest.TestCase):
                 output / "case_map.png",
                 output / "neighborhood_delays.png",
                 output / "category_durations.png",
+                output / "fair_queue_preview.html",
             ]
 
             for path in expected_files:
@@ -31,7 +32,12 @@ class TestCliWorkflow(unittest.TestCase):
                 self.assertGreater(path.stat().st_size, 0)
 
             self.assertIn("neighborhood_csv_path", result)
+            self.assertIn("fair_queue_preview_path", result)
             self.assertFalse((output / "equity_priority_scores.csv").exists())
+
+            queue_html = (output / "fair_queue_preview.html").read_text(encoding="utf-8")
+            self.assertIn('"Status": "Open"', queue_html)
+            self.assertNotIn('"Status": "Closed"', queue_html)
 
 
 if __name__ == "__main__":

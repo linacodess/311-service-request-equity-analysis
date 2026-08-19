@@ -7,8 +7,12 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
 from service_request_equity.analysis import NeighborhoodAnalyzer
 from service_request_equity.data_loader import DataLoader
+from service_request_equity.delay_tracker import DelayTracker
+from service_request_equity.fair_queue import FairServiceQueue
 from service_request_equity.sorting import CaseSorter
 from service_request_equity.visualization import Visualizer
 
@@ -47,15 +51,22 @@ def run_analysis(data_path: str | Path, output_dir: str | Path, limit: int | Non
 
     loader = DataLoader(data_path)
     df = loader.load(nrows=limit)
+    historical_df = _cases_with_status(df, "Closed")
+    active_df = _prepare_active_requests(df)
 
     sorter = CaseSorter()
-    ranked_df = sorter.filter_ranked_categories(df)
+    ranked_df = sorter.filter_ranked_categories(historical_df)
     sorted_df = sorter.sort_by_urgency(ranked_df)
 
     analyzer = NeighborhoodAnalyzer(sorted_df)
     neighborhood_delay_summary = analyzer.neighborhood_delay_summary()
     category_summary = analyzer.category_duration_summary()
     snapshot = analyzer.equity_snapshot(top_n=top_n)
+
+    delay_tracker = DelayTracker()
+    delay_tracker.refresh(sorted_df)
+    fair_queue = FairServiceQueue(active_df, delay_tracker=delay_tracker)
+    queue_preview = fair_queue.queue_dataframe()
 
     summary_payload = {
         "dataset": loader.get_basic_stats(),
@@ -85,16 +96,50 @@ def run_analysis(data_path: str | Path, output_dir: str | Path, limit: int | Non
         output / "category_durations.png",
         top_n=top_n,
     )
+    queue_preview_path = visualizer.create_fair_queue_preview_html(
+        queue_preview,
+        output / "fair_queue_preview.html",
+        top_n=top_n,
+    )
 
     return {
         "summary_path": str(summary_path),
         "map_path": str(map_path),
         "neighborhood_delays_path": str(neighborhood_path),
         "category_durations_path": str(category_path),
+        "fair_queue_preview_path": str(queue_preview_path),
         "neighborhood_csv_path": str(neighborhood_csv_path),
         "category_csv_path": str(category_csv_path),
         "snapshot": snapshot,
     }
+
+
+def _cases_with_status(df: pd.DataFrame, status: str) -> pd.DataFrame:
+    """Return cases matching one Status value."""
+    status_values = df["Status"].astype("string").str.strip().str.casefold()
+    return df.loc[status_values == status.casefold()].copy().reset_index(drop=True)
+
+
+def _prepare_active_requests(df: pd.DataFrame) -> pd.DataFrame:
+    """Return open requests with usable days_open values for queue ranking."""
+    active = _cases_with_status(df, "Open")
+    if active.empty:
+        return active
+
+    active["days_open"] = pd.to_numeric(active["days_open"], errors="coerce")
+    missing_days_open = active["days_open"].isna()
+    if not missing_days_open.any():
+        return active
+
+    if "OpenedDate" not in active.columns:
+        raise KeyError("Open requests with missing days_open require OpenedDate.")
+
+    opened = pd.to_datetime(active.loc[missing_days_open, "OpenedDate"], errors="coerce")
+    today = pd.Timestamp.today().normalize()
+    active.loc[missing_days_open, "days_open"] = (
+        (today - opened).dt.total_seconds().div(86400).clip(lower=0)
+    )
+    return active
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -117,4 +162,5 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Neighborhood delay CSV: {result['neighborhood_csv_path']}")
     print(f"Neighborhood chart: {result['neighborhood_delays_path']}")
     print(f"Category chart: {result['category_durations_path']}")
+    print(f"Fair queue preview: {result['fair_queue_preview_path']}")
     return 0

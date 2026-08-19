@@ -45,6 +45,31 @@ class TestVisualizer(unittest.TestCase):
         self.assertGreater(cap, 3.0)
         self.assertLess(cap, 100.0)
 
+    def test_fair_queue_preview_html_is_written(self) -> None:
+        queue_df = pd.DataFrame(
+            {
+                "CaseID": [101, 102],
+                "Status": ["Open", "Open"],
+                "Category": ["Needle Pickup", "Street Light Outages"],
+                "Neighborhood": ["Dorchester", "Roxbury"],
+                "urgency_score": [1, 2],
+                "neighborhood_delay_boost": [2.5, 0.0],
+                "days_open": [4, None],
+            }
+        )
+        visualizer = Visualizer(queue_df)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output = Path(tmp_dir) / "queue.html"
+            html_path = visualizer.create_fair_queue_preview_html(queue_df, output)
+
+            html = html_path.read_text(encoding="utf-8")
+            self.assertIn("Fair Service Queue Preview", html)
+            self.assertIn("Needle Pickup", html)
+            self.assertIn("strictQueueRows", html)
+            self.assertIn("diverseQueueRows", html)
+            self.assertNotIn('"days_open": NaN', html)
+
 
 if __name__ == "__main__":
     unittest.main()

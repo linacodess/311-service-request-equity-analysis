@@ -17,6 +17,7 @@ import pandas as pd
 class Visualizer:
     """Create static visual artifacts for portfolio and README use."""
 
+    NEIGHBORHOOD_BOUNDARIES_PATH = Path("data/raw/boston_neighborhood_boundaries.geojson")
     DELAY_COLORMAP = LinearSegmentedColormap.from_list(
         "delay_green_to_brown",
         ["#1a9850", "#fee08b", "#d73027", "#4d1f0c"],
@@ -37,6 +38,7 @@ class Visualizer:
             raise ValueError("No valid coordinates available for map plot.")
 
         fig, ax = plt.subplots(figsize=(10, 7))
+        self._plot_neighborhood_boundaries(ax)
         scatter = ax.scatter(
             coords["Longitude"],
             coords["Latitude"],
@@ -47,10 +49,12 @@ class Visualizer:
             s=8,
             alpha=0.28,
             edgecolors="none",
+            zorder=2,
         )
         ax.set_title("311 Service Requests by Location")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
+        ax.set_aspect("equal", adjustable="box")
         fig.colorbar(scatter, ax=ax, label=f"Days open (capped at {color_cap:g})")
         fig.tight_layout()
         fig.savefig(output, dpi=180)
@@ -202,6 +206,40 @@ class Visualizer:
             return 1.0
         cap = float(numeric.quantile(percentile))
         return max(cap, 1.0)
+
+    @classmethod
+    def _plot_neighborhood_boundaries(cls, ax: plt.Axes) -> None:
+        if not cls.NEIGHBORHOOD_BOUNDARIES_PATH.exists():
+            return
+
+        boundaries = json.loads(cls.NEIGHBORHOOD_BOUNDARIES_PATH.read_text(encoding="utf-8"))
+        for feature in boundaries.get("features", []):
+            geometry = feature.get("geometry") or {}
+            for ring in cls._geometry_rings(geometry):
+                if not ring:
+                    continue
+                longitudes = [point[0] for point in ring]
+                latitudes = [point[1] for point in ring]
+                ax.fill(
+                    longitudes,
+                    latitudes,
+                    facecolor="#fffaf6",
+                    edgecolor="#96add6",
+                    linewidth=0.7,
+                    alpha=0.58,
+                    zorder=0,
+                )
+
+    @staticmethod
+    def _geometry_rings(geometry: dict) -> list[list[list[float]]]:
+        geometry_type = geometry.get("type")
+        coordinates = geometry.get("coordinates", [])
+
+        if geometry_type == "Polygon":
+            return coordinates
+        if geometry_type == "MultiPolygon":
+            return [ring for polygon in coordinates for ring in polygon]
+        return []
 
     @staticmethod
     def _fair_queue_html(strict_queue_json: str, diverse_queue_json: str, strict_count: int, diverse_count: int) -> str:

@@ -80,13 +80,6 @@ class FairQueueSimulation:
         """Clear all simulated completions."""
         self._completed_case_ids = []
 
-    def completed_counts_by_neighborhood(self) -> pd.Series:
-        """Return simulated completed case counts by neighborhood."""
-        completed = self.simulated_completed_cases()
-        if completed.empty:
-            return pd.Series(dtype="int64", name="count")
-        return completed["Neighborhood"].value_counts()
-
     def summary(self) -> dict[str, int]:
         """Return simple simulation totals for the dashboard."""
         return {

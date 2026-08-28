@@ -22,12 +22,11 @@ At first, the queue focused on urgency and case duration. That helped show which
 - Loads and cleans 311 service request data with Pandas
 - Sorts cases by service urgency and days open
 - Builds a Fair Service Queue that accounts for neighborhood delay patterns
-- Includes a live queue manager for active, treated, and deleted requests
+- Uses open cases from the last selected number of days for the active queue
+- Simulates completing batches of queue cases
 - Tracks neighborhood delay boosts separately with a `DelayTracker`
-- Creates map-based visualizations of service requests
-- Compares resolution patterns across neighborhoods
-- Identifies neighborhoods with the longest average service delays
-- Exports summaries and charts for further analysis
+- Shows neighborhood delay changes before and after the simulation
+- Maps active queue cases with Boston neighborhood boundaries
 
 ## Initial Priority Ranking
 
@@ -73,6 +72,8 @@ The project now separates this logic into three parts:
 - `fair_queue.py`: manages the live queue state
 - `delay_tracker.py`: calculates neighborhood delay boosts
 
+The Streamlit dashboard uses open cases only. Completed cases are removed from the active simulation queue so the neighborhood delay boosts can be recalculated from the cases still waiting.
+
 ## Why This Matters
 
 311 data is not only a technical dataset. It reflects how residents ask for help and how city services respond. A queue that only looks at urgency may be efficient, but it may not be fair if some neighborhoods consistently wait longer.
@@ -85,33 +86,30 @@ This project explores how data analysis can be used not just to describe a probl
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-PYTHONPATH=src python -m service_request_equity
+streamlit run app.py
 ```
 
-By default, the project uses `data/sample_311_cases.csv` and writes results to `outputs/`.
+By default, the app uses `data/raw/311_service_requests_2026.csv` when it exists. Otherwise, it falls back to `data/sample_311_cases.csv`.
 
 ## Run With A Larger Dataset
 
-Large raw datasets are not committed to this repo. Put a CSV in `data/raw/`, then run:
+Large raw datasets are not committed to this repo. Put the 2026 CSV in `data/raw/`, then run:
 
 ```bash
-PYTHONPATH=src python -m service_request_equity \
-  --data-path data/raw/311_Cases_Boston.csv \
-  --output-dir outputs/boston \
-  --limit 100000
+streamlit run app.py
 ```
 
-## Outputs
+The project supports both the original class-project CSV format and the newer official Boston 311 export format.
 
-The program creates:
+The larger 311 CSV files and Boston neighborhood boundary GeoJSON can be downloaded from [Analyze Boston](https://data.boston.gov/), Boston's official open data portal.
 
-- `summary.json`
-- `neighborhood_delay_summary.csv`
-- `category_summary.csv`
-- `case_map.png`
-- `neighborhood_delays.png`
-- `category_durations.png`
-- `fair_queue_preview.html`
+## Dashboard Views
+
+The Streamlit dashboard includes:
+
+- **Simulation**: current queue metrics, the complete-next-cases button, and the strict queue preview
+- **Neighborhood Impact**: before/after average days open by neighborhood and the current delay boost table
+- **Map**: active queue cases plotted over Boston neighborhood boundaries
 
 ## Tests
 

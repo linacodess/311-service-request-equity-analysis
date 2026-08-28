@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
 import pandas as pd
 import streamlit as st
 
@@ -14,12 +16,17 @@ if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
 from service_request_equity.data_loader import DataLoader
+from service_request_equity.map_visualization import plot_neighborhood_boundaries
 from service_request_equity.simulation import FairQueueSimulation
 
 DEFAULT_DATA_PATH = PROJECT_ROOT / "data" / "raw" / "311_service_requests_2026.csv"
 SAMPLE_DATA_PATH = PROJECT_ROOT / "data" / "sample_311_cases.csv"
 COMPLETION_COUNT = 10000
 DEFAULT_ACTIVE_CASE_MAX_DAYS_OPEN = 90
+DELAY_COLORMAP = LinearSegmentedColormap.from_list(
+    "delay_green_to_brown",
+    ["#1a9850", "#fee08b", "#d73027", "#4d1f0c"],
+)
 
 
 def main() -> None:
@@ -40,10 +47,21 @@ def main() -> None:
         f"because long-open 311 records are often resolved-but-unmarked, especially Parking Enforcement. "
         f"{excluded_count:,} of {total_open_cases:,} open cases excluded."
     )
-    _render_controls(simulation)
-    _render_summary(simulation)
-    _render_delay_dashboard(simulation)
-    _render_queue(simulation)
+
+    simulation_tab, impact_tab, map_tab = st.tabs(
+        ["Simulation", "Neighborhood Impact", "Map"]
+    )
+
+    with simulation_tab:
+        _render_controls(simulation)
+        _render_summary(simulation)
+        _render_queue(simulation)
+
+    with impact_tab:
+        _render_neighborhood_impact(simulation)
+
+    with map_tab:
+        _render_map(simulation)
 
 
 def _data_path_input() -> Path:
@@ -118,32 +136,42 @@ def _render_summary(simulation: FairQueueSimulation) -> None:
         st.success(f"Completed {len(st.session_state.last_completed):,} cases in this simulation step.")
 
 
-def _render_delay_dashboard(simulation: FairQueueSimulation) -> None:
+def _render_neighborhood_impact(simulation: FairQueueSimulation) -> None:
     st.subheader("Neighborhood Delay Boosts")
 
     initial_tracker = FairQueueSimulation(simulation.initial_active_df).delay_tracker()
     current_summary = simulation.delay_tracker().boost_summary()
     initial_summary = initial_tracker.boost_summary()
     comparison = _delay_comparison(initial_summary, current_summary)
+
+    st.write("Average days open before and after the simulation")
+    _render_neighborhood_bar_chart(comparison)
+
+    st.write("Neighborhood delay table")
+    st.dataframe(
+        comparison,
+        hide_index=True,
+        width="stretch",
+    )
+
+
+def _render_map(simulation: FairQueueSimulation) -> None:
+    st.subheader("Current Queue Map")
     queue_df = simulation.queue_dataframe()
 
-    left, right = st.columns([1.2, 1])
+    if queue_df.empty:
+        st.info("No active ranked cases remain to map.")
+        return
 
-    with left:
-        st.write("Neighborhood delay table")
-        st.dataframe(
-            comparison,
-            hide_index=True,
-            use_container_width=True,
-        )
+    coords = queue_df.dropna(subset=["Longitude", "Latitude", "days_open"]).copy()
+    if coords.empty:
+        st.info("No valid coordinates available for the current queue.")
+        return
 
-    with right:
-        category_summary = _category_summary(queue_df)
-        st.write("Top 3 categories overall")
-        if category_summary.empty:
-            st.info("No active ranked cases remain.")
-        else:
-            st.dataframe(category_summary, hide_index=True, use_container_width=True)
+    st.caption("Dots show current ranked queue cases. Color is based on days open.")
+    fig = _case_map_figure(coords)
+    st.pyplot(fig)
+    plt.close(fig)
 
 
 def _render_queue(simulation: FairQueueSimulation) -> None:
@@ -154,8 +182,23 @@ def _render_queue(simulation: FairQueueSimulation) -> None:
         st.info("No active ranked cases remain in the queue.")
         return
 
-    preview = queue_df.head(25).copy().reset_index(drop=True)
-    preview.insert(0, "Queue rank", range(1, len(preview) + 1))
+    ranked_queue = queue_df.copy().reset_index(drop=True)
+    ranked_queue.insert(0, "Queue rank", range(1, len(ranked_queue) + 1))
+    categories = sorted(ranked_queue["Category"].dropna().unique())
+    selected_categories = st.multiselect(
+        "Display categories",
+        options=categories,
+        default=categories,
+        help="This only filters the table display. The simulation still completes cases from the full fair queue.",
+    )
+    if selected_categories:
+        ranked_queue = ranked_queue[ranked_queue["Category"].isin(selected_categories)]
+
+    preview = ranked_queue.head(25).copy().reset_index(drop=True)
+    if preview.empty:
+        st.info("No queue cases match the selected category filter.")
+        return
+
     preview["urgency_score"] = preview["urgency_score"].astype(int)
     preview["neighborhood_delay_boost"] = preview["neighborhood_delay_boost"].map(_round_number)
     preview["days_open"] = preview["days_open"].map(_round_number)
@@ -168,7 +211,70 @@ def _render_queue(simulation: FairQueueSimulation) -> None:
         "neighborhood_delay_boost",
         "days_open",
     ]
-    st.dataframe(preview[columns], hide_index=True, use_container_width=True)
+    st.dataframe(preview[columns], hide_index=True, width="stretch")
+
+
+def _render_neighborhood_bar_chart(comparison: pd.DataFrame) -> None:
+    if comparison.empty:
+        st.info("No neighborhood data available.")
+        return
+
+    chart_df = comparison.sort_values("Initial avg days open", ascending=True)
+    neighborhoods = chart_df["Neighborhood"].tolist()
+    y_positions = range(len(chart_df))
+
+    fig_height = max(5, len(chart_df) * 0.42)
+    fig, ax = plt.subplots(figsize=(11, fig_height))
+    ax.barh(
+        [position - 0.18 for position in y_positions],
+        chart_df["Initial avg days open"],
+        height=0.34,
+        color="#96add6",
+        label="Initial",
+    )
+    ax.barh(
+        [position + 0.18 for position in y_positions],
+        chart_df["Current avg days open"],
+        height=0.34,
+        color="#e85234",
+        label="Current",
+    )
+    ax.set_yticks(list(y_positions), neighborhoods)
+    ax.set_xlabel("Average days open")
+    ax.set_ylabel("Neighborhood")
+    ax.legend()
+    ax.grid(axis="x", alpha=0.18)
+    ax.set_axisbelow(True)
+    fig.tight_layout()
+    st.pyplot(fig)
+    plt.close(fig)
+
+
+def _case_map_figure(queue_df: pd.DataFrame) -> plt.Figure:
+    days_open = pd.to_numeric(queue_df["days_open"], errors="coerce")
+    color_cap = _percentile_cap(days_open, percentile=0.95)
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+    plot_neighborhood_boundaries(ax)
+    scatter = ax.scatter(
+        queue_df["Longitude"],
+        queue_df["Latitude"],
+        c=days_open.clip(upper=color_cap),
+        cmap=DELAY_COLORMAP,
+        vmin=0,
+        vmax=color_cap,
+        s=7,
+        alpha=0.28,
+        edgecolors="none",
+        zorder=2,
+    )
+    ax.set_title("Current Active Queue Cases")
+    ax.set_xlabel("Longitude")
+    ax.set_ylabel("Latitude")
+    ax.set_aspect("equal", adjustable="box")
+    fig.colorbar(scatter, ax=ax, label=f"Days open (capped at {_round_number(color_cap)})")
+    fig.tight_layout()
+    return fig
 
 
 def _delay_comparison(initial_summary: pd.DataFrame, current_summary: pd.DataFrame) -> pd.DataFrame:
@@ -236,24 +342,6 @@ def _delay_comparison(initial_summary: pd.DataFrame, current_summary: pd.DataFra
     ]
 
 
-def _category_summary(queue_df: pd.DataFrame) -> pd.DataFrame:
-    if queue_df.empty:
-        return pd.DataFrame()
-
-    summary = (
-        queue_df.groupby("Category")
-        .agg(
-            total_cases=("CaseID", "count"),
-            avg_days_open=("days_open", "mean"),
-        )
-        .reset_index()
-        .sort_values(["total_cases", "avg_days_open"], ascending=[False, False])
-        .head(3)
-    )
-    summary["avg_days_open"] = summary["avg_days_open"].map(_round_number)
-    return summary
-
-
 def _format_metric(value: float | None) -> str:
     if value is None:
         return "n/a"
@@ -264,6 +352,14 @@ def _round_number(value: float | int) -> int | None:
     if pd.isna(value):
         return None
     return int(round(float(value)))
+
+
+def _percentile_cap(series: pd.Series, percentile: float) -> float:
+    numeric = pd.to_numeric(series, errors="coerce").dropna()
+    if numeric.empty:
+        return 1.0
+    cap = float(numeric.quantile(percentile))
+    return max(cap, 1.0)
 
 
 def _format_signed_change(value: float | int) -> str:

@@ -75,6 +75,22 @@ class TestDataLoader(unittest.TestCase):
 
         self.assertEqual(active.loc[0, "days_open"], 4)
 
+    def test_active_cases_can_exclude_stale_records(self) -> None:
+        loader = DataLoader(SAMPLE_PATH)
+        loader.load()
+
+        active = loader.get_active_cases(max_days_open=5)
+
+        self.assertLess(len(active), 18)
+        self.assertTrue((active["days_open"] <= 5).all())
+
+    def test_active_cases_requires_positive_stale_record_limit(self) -> None:
+        loader = DataLoader(SAMPLE_PATH)
+        loader.load()
+
+        with self.assertRaises(ValueError):
+            loader.get_active_cases(max_days_open=0)
+
     def test_missing_file_raises(self) -> None:
         loader = DataLoader("data/not-here.csv")
 

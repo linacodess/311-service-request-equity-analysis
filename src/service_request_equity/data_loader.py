@@ -79,9 +79,17 @@ class DataLoader:
         """Return initially closed cases for historical delay analysis."""
         return self.cases_with_status(self._loaded_data(), "Closed")
 
-    def get_active_cases(self, today: pd.Timestamp | None = None) -> pd.DataFrame:
+    def get_active_cases(
+        self,
+        today: pd.Timestamp | None = None,
+        max_days_open: int | None = None,
+    ) -> pd.DataFrame:
         """Return initially open cases with usable days_open values for queue ranking."""
-        return self.prepare_active_requests(self._loaded_data(), today=today)
+        return self.prepare_active_requests(
+            self._loaded_data(),
+            today=today,
+            max_days_open=max_days_open,
+        )
 
     def _loaded_data(self) -> pd.DataFrame:
         if self.df is None:
@@ -121,26 +129,36 @@ class DataLoader:
         return df.loc[status_values == status.casefold()].copy().reset_index(drop=True)
 
     @classmethod
-    def prepare_active_requests(cls, df: pd.DataFrame, today: pd.Timestamp | None = None) -> pd.DataFrame:
+    def prepare_active_requests(
+        cls,
+        df: pd.DataFrame,
+        today: pd.Timestamp | None = None,
+        max_days_open: int | None = None,
+    ) -> pd.DataFrame:
         """Return open requests with usable days_open values for queue ranking."""
+        if max_days_open is not None and max_days_open <= 0:
+            raise ValueError("max_days_open must be greater than zero.")
+
         active = cls.cases_with_status(df, "Open")
         if active.empty:
             return active
 
         active["days_open"] = pd.to_numeric(active["days_open"], errors="coerce")
         missing_days_open = active["days_open"].isna()
-        if not missing_days_open.any():
-            return active
+        if missing_days_open.any():
+            if "OpenedDate" not in active.columns:
+                raise KeyError("Open requests with missing days_open require OpenedDate.")
 
-        if "OpenedDate" not in active.columns:
-            raise KeyError("Open requests with missing days_open require OpenedDate.")
+            opened = pd.to_datetime(active.loc[missing_days_open, "OpenedDate"], errors="coerce")
+            current_day = pd.Timestamp.today().normalize() if today is None else pd.Timestamp(today).normalize()
+            active.loc[missing_days_open, "days_open"] = (
+                (current_day - opened).dt.total_seconds().div(86400).clip(lower=0)
+            )
 
-        opened = pd.to_datetime(active.loc[missing_days_open, "OpenedDate"], errors="coerce")
-        current_day = pd.Timestamp.today().normalize() if today is None else pd.Timestamp(today).normalize()
-        active.loc[missing_days_open, "days_open"] = (
-            (current_day - opened).dt.total_seconds().div(86400).clip(lower=0)
-        )
-        return active
+        if max_days_open is not None:
+            active = active[active["days_open"] <= max_days_open]
+
+        return active.reset_index(drop=True)
 
     @staticmethod
     def _clean_core_fields(df: pd.DataFrame) -> pd.DataFrame:

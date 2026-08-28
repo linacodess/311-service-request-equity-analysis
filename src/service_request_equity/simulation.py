@@ -15,16 +15,13 @@ class FairQueueSimulation:
 
     def __init__(
         self,
-        historical_df: pd.DataFrame,
         active_df: pd.DataFrame,
         completed_case_ids: list[Any] | None = None,
         case_id_column: str = "CaseID",
     ) -> None:
-        self.historical_df = historical_df.copy().reset_index(drop=True)
         self.initial_active_df = active_df.copy().reset_index(drop=True)
         self.case_id_column = case_id_column
         self._completed_case_ids = list(completed_case_ids or [])
-        self._require_case_id_column(self.historical_df)
         self._require_case_id_column(self.initial_active_df)
 
     @property
@@ -48,16 +45,15 @@ class FairQueueSimulation:
         return completed.reset_index(drop=True)
 
     def delay_tracker_data(self) -> pd.DataFrame:
-        """Return real closed cases plus simulated completed cases."""
-        return pd.concat(
-            [self.historical_df, self.simulated_completed_cases()],
-            ignore_index=True,
-        )
+        """Return remaining active cases used for simulation delay boosts."""
+        return self.active_cases()
 
     def delay_tracker(self) -> DelayTracker:
         """Build a delay tracker from the current simulation state."""
         tracker = DelayTracker()
-        tracker.refresh(self.delay_tracker_data())
+        data = self.delay_tracker_data()
+        if not data.empty:
+            tracker.refresh(data)
         return tracker
 
     def queue_dataframe(self) -> pd.DataFrame:
@@ -96,7 +92,6 @@ class FairQueueSimulation:
         return {
             "active_cases": int(len(self.active_cases())),
             "completed_cases": int(len(self._completed_case_ids)),
-            "historical_cases": int(len(self.historical_df)),
         }
 
     def _require_case_id_column(self, df: pd.DataFrame) -> None:

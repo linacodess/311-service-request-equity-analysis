@@ -75,6 +75,19 @@ class DataLoader:
 
         return filtered
 
+    def get_historical_cases(self) -> pd.DataFrame:
+        """Return initially closed cases for historical delay analysis."""
+        return self.cases_with_status(self._loaded_data(), "Closed")
+
+    def get_active_cases(self, today: pd.Timestamp | None = None) -> pd.DataFrame:
+        """Return initially open cases with usable days_open values for queue ranking."""
+        return self.prepare_active_requests(self._loaded_data(), today=today)
+
+    def _loaded_data(self) -> pd.DataFrame:
+        if self.df is None:
+            raise ValueError("Data has not been loaded yet.")
+        return self.df
+
     @staticmethod
     def _validate_columns(df: pd.DataFrame) -> None:
         missing = [column for column in CORE_COLUMNS if column not in df.columns]
@@ -100,6 +113,34 @@ class DataLoader:
             if source in normalized.columns and target not in normalized.columns:
                 normalized[target] = normalized[source]
         return normalized
+
+    @staticmethod
+    def cases_with_status(df: pd.DataFrame, status: str) -> pd.DataFrame:
+        """Return cases matching one Status value."""
+        status_values = df["Status"].astype("string").str.strip().str.casefold()
+        return df.loc[status_values == status.casefold()].copy().reset_index(drop=True)
+
+    @classmethod
+    def prepare_active_requests(cls, df: pd.DataFrame, today: pd.Timestamp | None = None) -> pd.DataFrame:
+        """Return open requests with usable days_open values for queue ranking."""
+        active = cls.cases_with_status(df, "Open")
+        if active.empty:
+            return active
+
+        active["days_open"] = pd.to_numeric(active["days_open"], errors="coerce")
+        missing_days_open = active["days_open"].isna()
+        if not missing_days_open.any():
+            return active
+
+        if "OpenedDate" not in active.columns:
+            raise KeyError("Open requests with missing days_open require OpenedDate.")
+
+        opened = pd.to_datetime(active.loc[missing_days_open, "OpenedDate"], errors="coerce")
+        current_day = pd.Timestamp.today().normalize() if today is None else pd.Timestamp(today).normalize()
+        active.loc[missing_days_open, "days_open"] = (
+            (current_day - opened).dt.total_seconds().div(86400).clip(lower=0)
+        )
+        return active
 
     @staticmethod
     def _clean_core_fields(df: pd.DataFrame) -> pd.DataFrame:

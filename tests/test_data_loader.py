@@ -43,6 +43,38 @@ class TestDataLoader(unittest.TestCase):
         self.assertEqual(set(filtered["Neighborhood"]), {"Dorchester"})
         self.assertGreater(len(filtered), 5)
 
+    def test_prepares_initial_historical_and_active_cases(self) -> None:
+        loader = DataLoader(SAMPLE_PATH)
+        loader.load()
+
+        historical = loader.get_historical_cases()
+        active = loader.get_active_cases()
+
+        self.assertEqual(len(historical), 42)
+        self.assertEqual(len(active), 18)
+        self.assertEqual(set(historical["Status"]), {"Closed"})
+        self.assertEqual(set(active["Status"]), {"Open"})
+        self.assertTrue(pd.api.types.is_numeric_dtype(active["days_open"]))
+
+    def test_active_cases_fill_missing_days_open_from_opened_date(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "active.csv"
+            path.write_text(
+                "\n".join(
+                    [
+                        "CaseID,OpenedDate,ClosedDate,Status,Category,Neighborhood,Latitude,Longitude",
+                        "1,2026-01-01,,Open,Needle Pickup,Dorchester,42.3,-71.0",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            loader = DataLoader(path)
+            loader.load()
+            active = loader.get_active_cases(today=pd.Timestamp("2026-01-05"))
+
+        self.assertEqual(active.loc[0, "days_open"], 4)
+
     def test_missing_file_raises(self) -> None:
         loader = DataLoader("data/not-here.csv")
 

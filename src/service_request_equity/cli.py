@@ -7,8 +7,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
-
 from service_request_equity.analysis import NeighborhoodAnalyzer
 from service_request_equity.data_loader import DataLoader
 from service_request_equity.delay_tracker import DelayTracker
@@ -50,9 +48,9 @@ def run_analysis(data_path: str | Path, output_dir: str | Path, limit: int | Non
     output.mkdir(parents=True, exist_ok=True)
 
     loader = DataLoader(data_path)
-    df = loader.load(nrows=limit)
-    historical_df = _cases_with_status(df, "Closed")
-    active_df = _prepare_active_requests(df)
+    loader.load(nrows=limit)
+    historical_df = loader.get_historical_cases()
+    active_df = loader.get_active_cases()
 
     sorter = CaseSorter()
     ranked_df = sorter.filter_ranked_categories(historical_df)
@@ -112,34 +110,6 @@ def run_analysis(data_path: str | Path, output_dir: str | Path, limit: int | Non
         "category_csv_path": str(category_csv_path),
         "snapshot": snapshot,
     }
-
-
-def _cases_with_status(df: pd.DataFrame, status: str) -> pd.DataFrame:
-    """Return cases matching one Status value."""
-    status_values = df["Status"].astype("string").str.strip().str.casefold()
-    return df.loc[status_values == status.casefold()].copy().reset_index(drop=True)
-
-
-def _prepare_active_requests(df: pd.DataFrame) -> pd.DataFrame:
-    """Return open requests with usable days_open values for queue ranking."""
-    active = _cases_with_status(df, "Open")
-    if active.empty:
-        return active
-
-    active["days_open"] = pd.to_numeric(active["days_open"], errors="coerce")
-    missing_days_open = active["days_open"].isna()
-    if not missing_days_open.any():
-        return active
-
-    if "OpenedDate" not in active.columns:
-        raise KeyError("Open requests with missing days_open require OpenedDate.")
-
-    opened = pd.to_datetime(active.loc[missing_days_open, "OpenedDate"], errors="coerce")
-    today = pd.Timestamp.today().normalize()
-    active.loc[missing_days_open, "days_open"] = (
-        (today - opened).dt.total_seconds().div(86400).clip(lower=0)
-    )
-    return active
 
 
 def main(argv: list[str] | None = None) -> int:

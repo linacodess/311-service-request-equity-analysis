@@ -30,8 +30,8 @@ def plot_neighborhood_boundaries(
             ax.fill(
                 longitudes,
                 latitudes,
-                facecolor="#fffaf6",
-                edgecolor="#96add6",
+                facecolor="#f7f3ef",
+                edgecolor="#95cde8",
                 linewidth=0.7,
                 alpha=0.58,
                 zorder=0,

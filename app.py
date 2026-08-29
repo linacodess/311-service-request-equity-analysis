@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import sys
 from pathlib import Path
 
@@ -23,18 +24,21 @@ DEFAULT_DATA_PATH = PROJECT_ROOT / "data" / "raw" / "311_service_requests_2026.c
 SAMPLE_DATA_PATH = PROJECT_ROOT / "data" / "sample_311_cases.csv"
 COMPLETION_COUNT = 10000
 DEFAULT_ACTIVE_CASE_MAX_DAYS_OPEN = 90
+BLUE_DUNE = "#003198"
+AZURE_HORIZON = "#95cde8"
+PUMPKIN_VIBE = "#e05502"
+MISTY_CANVAS = "#dad1ca"
+LIGHT_CANVAS = "#f7f3ef"
+SOFT_CANVAS = "#efe8e1"
 DELAY_COLORMAP = LinearSegmentedColormap.from_list(
-    "delay_green_to_brown",
-    ["#1a9850", "#fee08b", "#d73027", "#4d1f0c"],
+    "delay_blue_to_orange",
+    [AZURE_HORIZON, PUMPKIN_VIBE],
 )
 
 
 def main() -> None:
     st.set_page_config(page_title="Fair Service Queue Simulation", layout="wide")
-    st.title("Fair Service Queue Simulation")
-    st.caption(
-        "Simulate how completing cases from the fair queue can change neighborhood delay boosts over time."
-    )
+    _apply_theme_css()
 
     data_path = _data_path_input()
     max_days_open = _active_case_limit_input()
@@ -42,19 +46,12 @@ def main() -> None:
     simulation = _get_simulation(data_path, max_days_open, active_df)
 
     excluded_count = total_open_cases - len(active_df)
-    st.caption(
-        f"Open cases beyond {max_days_open} days are treated as stale and excluded from the queue "
-        f"because long-open 311 records are often resolved-but-unmarked, especially Parking Enforcement. "
-        f"{excluded_count:,} of {total_open_cases:,} open cases excluded."
-    )
+    _render_header(simulation, max_days_open, excluded_count, total_open_cases)
+    _render_summary(simulation)
 
-    simulation_tab, impact_tab, map_tab = st.tabs(
-        ["Simulation", "Neighborhood Impact", "Map"]
-    )
+    queue_tab, impact_tab, map_tab = st.tabs(["Queue", "Impact", "Map"])
 
-    with simulation_tab:
-        _render_controls(simulation)
-        _render_summary(simulation)
+    with queue_tab:
         _render_queue(simulation)
 
     with impact_tab:
@@ -62,6 +59,230 @@ def main() -> None:
 
     with map_tab:
         _render_map(simulation)
+
+
+def _apply_theme_css() -> None:
+    st.markdown(
+        """
+        <style>
+        .project-description {
+            background: #efe8e1;
+            border: 1px solid rgba(0, 49, 152, 0.16);
+            border-left: 5px solid #e05502;
+            border-radius: 10px;
+            color: #16345f;
+            font-size: 1rem;
+            line-height: 1.55;
+            margin: 0.25rem 0 1.2rem;
+            padding: 1rem 1.15rem;
+        }
+
+        .metric-grid {
+            display: grid;
+            gap: 1rem;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            margin: 0.8rem 0 1.6rem;
+        }
+
+        .metric-card {
+            background: rgba(255, 255, 255, 0.48);
+            border: 1px solid rgba(0, 49, 152, 0.12);
+            border-radius: 14px;
+            box-shadow: 0 14px 34px rgba(0, 49, 152, 0.06);
+            padding: 1rem 1.1rem;
+        }
+
+        .metric-label {
+            color: rgba(0, 49, 152, 0.72);
+            font-size: 0.82rem;
+            font-weight: 700;
+            letter-spacing: 0;
+            margin-bottom: 0.3rem;
+            text-transform: uppercase;
+        }
+
+        .metric-value {
+            color: #003198;
+            font-size: 2.05rem;
+            font-weight: 800;
+            line-height: 1.05;
+        }
+
+        div[data-testid="stTabs"] button {
+            padding: 0.8rem 1.15rem;
+        }
+
+        div[data-testid="stTabs"] button p {
+            color: #003198;
+            font-size: 1.3rem;
+            font-weight: 750;
+        }
+
+        div[data-testid="stTabs"] button[aria-selected="true"] p {
+            color: #e05502;
+        }
+
+        div.stButton > button {
+            min-height: 2.75rem;
+            font-weight: 650;
+            font-size: 0.95rem;
+        }
+
+        div.stButton > button p {
+            font-size: 0.95rem;
+            font-weight: 650;
+        }
+
+        div.stButton > button[kind="primary"],
+        div.stButton > button[kind="primary"] p {
+            color: #f7f3ef !important;
+        }
+
+        div[data-testid="stButtonGroup"] [data-variant="pills"] {
+            min-height: 1.85rem !important;
+            padding: 0.16rem 0.55rem !important;
+            border-radius: 999px !important;
+        }
+
+        div[data-testid="stButtonGroup"] [data-variant="pills"] p {
+            font-size: 0.78rem;
+            font-weight: 600;
+            line-height: 1.1;
+        }
+
+        div[data-testid="stButtonGroup"] [data-variant="pills"][aria-selected="true"],
+        div[data-testid="stButtonGroup"] [data-variant="pills"][aria-pressed="true"],
+        div[data-testid="stButtonGroup"] [data-variant="pills"][data-selected="true"] {
+            background-color: rgba(224, 85, 2, 0.14);
+            border-color: rgba(224, 85, 2, 0.45);
+        }
+
+        div[data-testid="stButtonGroup"] [data-variant="pills"][aria-selected="true"] p,
+        div[data-testid="stButtonGroup"] [data-variant="pills"][aria-pressed="true"] p,
+        div[data-testid="stButtonGroup"] [data-variant="pills"][data-selected="true"] p {
+            color: #003198 !important;
+        }
+
+        .queue-list {
+            display: grid;
+            gap: 0.7rem;
+            margin-top: 1rem;
+        }
+
+        .queue-card {
+            align-items: center;
+            background: rgba(255, 255, 255, 0.56);
+            border: 1px solid rgba(0, 49, 152, 0.12);
+            border-left: 5px solid #95cde8;
+            border-radius: 14px;
+            box-shadow: 0 12px 28px rgba(0, 49, 152, 0.05);
+            display: grid;
+            gap: 1rem;
+            grid-template-columns: 3rem 1.2fr 1.45fr 1.15fr 0.8fr 1fr 0.8fr;
+            padding: 0.85rem 1rem;
+        }
+
+        .queue-rank {
+            align-items: center;
+            background: #003198;
+            border-radius: 999px;
+            color: #f7f3ef;
+            display: flex;
+            font-size: 0.9rem;
+            font-weight: 800;
+            height: 2.25rem;
+            justify-content: center;
+            width: 2.25rem;
+        }
+
+        .queue-label {
+            color: rgba(0, 49, 152, 0.62);
+            font-size: 0.68rem;
+            font-weight: 800;
+            letter-spacing: 0;
+            text-transform: uppercase;
+        }
+
+        .queue-value {
+            color: #12315c;
+            font-size: 0.92rem;
+            font-weight: 700;
+            line-height: 1.25;
+            margin-top: 0.15rem;
+        }
+
+        .urgency-pill {
+            align-items: center;
+            background: rgba(149, 205, 232, 0.38);
+            border-radius: 999px;
+            color: #003198;
+            display: inline-flex;
+            font-weight: 800;
+            height: 2rem;
+            justify-content: center;
+            width: 2rem;
+        }
+
+        .mini-bar {
+            background: rgba(0, 49, 152, 0.1);
+            border-radius: 999px;
+            height: 0.38rem;
+            margin-top: 0.3rem;
+            overflow: hidden;
+            width: 100%;
+        }
+
+        .mini-bar-fill {
+            background: #e05502;
+            border-radius: 999px;
+            height: 100%;
+        }
+
+        @media (max-width: 900px) {
+            .metric-grid,
+            .queue-card {
+                grid-template-columns: 1fr;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_header(
+    simulation: FairQueueSimulation,
+    max_days_open: int,
+    excluded_count: int,
+    total_open_cases: int,
+) -> None:
+    title_col, reset_col = st.columns([0.78, 0.22], vertical_alignment="center")
+
+    with title_col:
+        st.title("Fair Service Queue Simulation")
+
+    with reset_col:
+        st.button(
+            "Reset simulation",
+            on_click=_reset_simulation,
+            args=(simulation,),
+            width="stretch",
+        )
+
+    st.markdown(
+        f"""
+        <div class="project-description">
+        This project simulates a fair queue for Boston 311 service requests. It ranks urgent
+        requests first, then gives priority to neighborhoods that currently wait longer than
+        others. As cases are completed, the goal is to reduce average delays over time for
+        neighborhoods that used to wait longer. Open cases beyond {max_days_open} days are
+        treated as stale and excluded because very long-open records are often resolved but
+        not marked closed, especially Parking Enforcement. {excluded_count:,} of
+        {total_open_cases:,} open cases are excluded by the current day limit.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _data_path_input() -> Path:
@@ -106,31 +327,24 @@ def _get_simulation(
     return st.session_state.simulation
 
 
-def _render_controls(simulation: FairQueueSimulation) -> None:
-    left, right = st.columns([1, 1])
-
-    with left:
-        if st.button(f"Complete next {COMPLETION_COUNT} cases", type="primary"):
-            st.session_state.last_completed = simulation.complete_next_cases(COMPLETION_COUNT)
-
-    with right:
-        if st.button("Reset simulation"):
-            simulation.reset()
-            st.session_state.last_completed = pd.DataFrame()
-
-
 def _render_summary(simulation: FairQueueSimulation) -> None:
     summary = simulation.summary()
     current_tracker = simulation.delay_tracker()
     queue_df = simulation.queue_dataframe()
 
-    active_col, completed_col, citywide_col = st.columns(3)
-    active_col.metric("Active queue cases", f"{len(queue_df):,}")
-    completed_col.metric("Completed in simulation", f"{summary['completed_cases']:,}")
-    citywide_col.metric(
-        "Active avg days open",
-        _format_metric(current_tracker.citywide_avg_days_open),
+    metrics = [
+        ("Active queue cases", f"{len(queue_df):,}"),
+        ("Completed in simulation", f"{summary['completed_cases']:,}"),
+        ("Active avg days open", _format_metric(current_tracker.citywide_avg_days_open)),
+    ]
+    cards = "\n".join(
+        f'<div class="metric-card">'
+        f'<div class="metric-label">{html.escape(label)}</div>'
+        f'<div class="metric-value">{html.escape(value)}</div>'
+        f"</div>"
+        for label, value in metrics
     )
+    st.markdown(f'<div class="metric-grid">{cards}</div>', unsafe_allow_html=True)
 
     if not st.session_state.last_completed.empty:
         st.success(f"Completed {len(st.session_state.last_completed):,} cases in this simulation step.")
@@ -175,7 +389,18 @@ def _render_map(simulation: FairQueueSimulation) -> None:
 
 
 def _render_queue(simulation: FairQueueSimulation) -> None:
-    st.subheader("Strict Fair Queue")
+    title_col, action_col = st.columns([0.78, 0.22], vertical_alignment="center")
+    with title_col:
+        st.subheader("Queue")
+    with action_col:
+        st.button(
+            "Complete cases",
+            type="primary",
+            on_click=_complete_next_cases,
+            args=(simulation,),
+            width="stretch",
+        )
+
     queue_df = simulation.queue_dataframe()
 
     if queue_df.empty:
@@ -185,14 +410,15 @@ def _render_queue(simulation: FairQueueSimulation) -> None:
     ranked_queue = queue_df.copy().reset_index(drop=True)
     ranked_queue.insert(0, "Queue rank", range(1, len(ranked_queue) + 1))
     categories = sorted(ranked_queue["Category"].dropna().unique())
-    selected_categories = st.multiselect(
-        "Display categories",
+    selected_categories = st.pills(
+        "Category",
         options=categories,
         default=categories,
+        selection_mode="multi",
         help="This only filters the table display. The simulation still completes cases from the full fair queue.",
+        width="stretch",
     )
-    if selected_categories:
-        ranked_queue = ranked_queue[ranked_queue["Category"].isin(selected_categories)]
+    ranked_queue = ranked_queue[ranked_queue["Category"].isin(selected_categories)]
 
     preview = ranked_queue.head(25).copy().reset_index(drop=True)
     if preview.empty:
@@ -211,7 +437,70 @@ def _render_queue(simulation: FairQueueSimulation) -> None:
         "neighborhood_delay_boost",
         "days_open",
     ]
-    st.dataframe(preview[columns], hide_index=True, width="stretch")
+    _render_queue_cards(preview[columns])
+
+
+def _render_queue_cards(preview: pd.DataFrame) -> None:
+    max_boost = max(preview["neighborhood_delay_boost"].max(), 1)
+    max_days_open = max(preview["days_open"].max(), 1)
+    cards = "\n".join(
+        _queue_card_html(row, max_boost=max_boost, max_days_open=max_days_open)
+        for _, row in preview.iterrows()
+    )
+    st.markdown(f'<div class="queue-list">{cards}</div>', unsafe_allow_html=True)
+
+
+def _queue_card_html(row: pd.Series, max_boost: int, max_days_open: int) -> str:
+    rank = _round_number(row["Queue rank"])
+    case_id = html.escape(str(row["CaseID"]))
+    category = html.escape(str(row["Category"]))
+    neighborhood = html.escape(str(row["Neighborhood"]))
+    urgency = _round_number(row["urgency_score"])
+    delay_boost = _round_number(row["neighborhood_delay_boost"]) or 0
+    days_open = _round_number(row["days_open"]) or 0
+    delay_width = min((delay_boost / max_boost) * 100, 100)
+    days_width = min((days_open / max_days_open) * 100, 100)
+
+    return (
+        f'<div class="queue-card">'
+        f'<div class="queue-rank">{rank}</div>'
+        f"<div>"
+        f'<div class="queue-label">Case ID</div>'
+        f'<div class="queue-value">{case_id}</div>'
+        f"</div>"
+        f"<div>"
+        f'<div class="queue-label">Category</div>'
+        f'<div class="queue-value">{category}</div>'
+        f"</div>"
+        f"<div>"
+        f'<div class="queue-label">Neighborhood</div>'
+        f'<div class="queue-value">{neighborhood}</div>'
+        f"</div>"
+        f"<div>"
+        f'<div class="queue-label">Urgency</div>'
+        f'<div class="queue-value"><span class="urgency-pill">{urgency}</span></div>'
+        f"</div>"
+        f"<div>"
+        f'<div class="queue-label">Delay boost</div>'
+        f'<div class="queue-value">{delay_boost}</div>'
+        f'<div class="mini-bar"><div class="mini-bar-fill" style="width: {delay_width:.1f}%"></div></div>'
+        f"</div>"
+        f"<div>"
+        f'<div class="queue-label">Days open</div>'
+        f'<div class="queue-value">{days_open}</div>'
+        f'<div class="mini-bar"><div class="mini-bar-fill" style="width: {days_width:.1f}%"></div></div>'
+        f"</div>"
+        f"</div>"
+    )
+
+
+def _complete_next_cases(simulation: FairQueueSimulation) -> None:
+    st.session_state.last_completed = simulation.complete_next_cases(COMPLETION_COUNT)
+
+
+def _reset_simulation(simulation: FairQueueSimulation) -> None:
+    simulation.reset()
+    st.session_state.last_completed = pd.DataFrame()
 
 
 def _render_neighborhood_bar_chart(comparison: pd.DataFrame) -> None:
@@ -229,22 +518,24 @@ def _render_neighborhood_bar_chart(comparison: pd.DataFrame) -> None:
         [position - 0.18 for position in y_positions],
         chart_df["Initial avg days open"],
         height=0.34,
-        color="#96add6",
+        color=AZURE_HORIZON,
         label="Initial",
     )
     ax.barh(
         [position + 0.18 for position in y_positions],
         chart_df["Current avg days open"],
         height=0.34,
-        color="#e85234",
+        color=PUMPKIN_VIBE,
         label="Current",
     )
     ax.set_yticks(list(y_positions), neighborhoods)
     ax.set_xlabel("Average days open")
     ax.set_ylabel("Neighborhood")
     ax.legend()
-    ax.grid(axis="x", alpha=0.18)
+    ax.grid(axis="x", color=MISTY_CANVAS, alpha=0.55)
     ax.set_axisbelow(True)
+    ax.set_facecolor(LIGHT_CANVAS)
+    fig.patch.set_facecolor(LIGHT_CANVAS)
     fig.tight_layout()
     st.pyplot(fig)
     plt.close(fig)
@@ -268,10 +559,12 @@ def _case_map_figure(queue_df: pd.DataFrame) -> plt.Figure:
         edgecolors="none",
         zorder=2,
     )
-    ax.set_title("Current Active Queue Cases")
+    ax.set_title("Current Active Queue Cases", color=BLUE_DUNE)
     ax.set_xlabel("Longitude")
     ax.set_ylabel("Latitude")
     ax.set_aspect("equal", adjustable="box")
+    ax.set_facecolor(LIGHT_CANVAS)
+    fig.patch.set_facecolor(LIGHT_CANVAS)
     fig.colorbar(scatter, ax=ax, label=f"Days open (capped at {_round_number(color_cap)})")
     fig.tight_layout()
     return fig

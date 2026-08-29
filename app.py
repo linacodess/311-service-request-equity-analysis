@@ -20,10 +20,10 @@ from service_request_equity.data_loader import DataLoader
 from service_request_equity.map_visualization import plot_neighborhood_boundaries
 from service_request_equity.simulation import FairQueueSimulation
 
-DEFAULT_DATA_PATH = PROJECT_ROOT / "data" / "raw" / "311_service_requests_2026.csv"
 SAMPLE_DATA_PATH = PROJECT_ROOT / "data" / "sample_311_cases.csv"
-COMPLETION_COUNT = 10000
-DEFAULT_ACTIVE_CASE_MAX_DAYS_OPEN = 90
+APP_DATA_PATH = PROJECT_ROOT / "data" / "app_queue_cases_110_days.csv"
+COMPLETION_COUNT = 5000
+APP_DATA_MAX_DAYS_OPEN = 110
 BLUE_DUNE = "#003198"
 AZURE_HORIZON = "#95cde8"
 PUMPKIN_VIBE = "#e05502"
@@ -31,27 +31,30 @@ MISTY_CANVAS = "#dad1ca"
 LIGHT_CANVAS = "#f7f3ef"
 SOFT_CANVAS = "#efe8e1"
 DELAY_COLORMAP = LinearSegmentedColormap.from_list(
-    "delay_blue_to_orange",
-    [AZURE_HORIZON, PUMPKIN_VIBE],
+    "delay_vivid_blue_to_orange",
+    [AZURE_HORIZON, "#2772c7", PUMPKIN_VIBE, "#b83200"],
 )
 
 
 def main() -> None:
     st.set_page_config(page_title="Fair Service Queue Simulation", layout="wide")
     _apply_theme_css()
+    _render_title()
 
-    data_path = _data_path_input()
-    max_days_open = _active_case_limit_input()
-    active_df, total_open_cases = _load_initial_cases(data_path, max_days_open)
-    simulation = _get_simulation(data_path, max_days_open, active_df)
+    data_path = APP_DATA_PATH if APP_DATA_PATH.exists() else SAMPLE_DATA_PATH
+    active_df = _load_initial_cases(data_path)
+    simulation = _get_simulation(data_path, active_df)
 
-    excluded_count = total_open_cases - len(active_df)
-    _render_header(simulation, max_days_open, excluded_count, total_open_cases)
-    _render_summary(simulation)
+    overview_tab, queue_tab, impact_tab, map_tab = st.tabs(
+        ["Overview", "Queue", "Impact", "Map"]
+    )
 
-    queue_tab, impact_tab, map_tab = st.tabs(["Queue", "Impact", "Map"])
+    with overview_tab:
+        _render_overview()
+        _render_overview_metrics(active_df)
 
     with queue_tab:
+        _render_summary(simulation)
         _render_queue(simulation)
 
     with impact_tab:
@@ -80,7 +83,7 @@ def _apply_theme_css() -> None:
         .metric-grid {
             display: grid;
             gap: 1rem;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
             margin: 0.8rem 0 1.6rem;
         }
 
@@ -131,6 +134,11 @@ def _apply_theme_css() -> None:
         div.stButton > button p {
             font-size: 0.95rem;
             font-weight: 650;
+        }
+
+        div.stButton > button:not([kind="primary"]),
+        div.stButton > button:not([kind="primary"]) p {
+            color: #d10000 !important;
         }
 
         div.stButton > button[kind="primary"],
@@ -250,12 +258,7 @@ def _apply_theme_css() -> None:
     )
 
 
-def _render_header(
-    simulation: FairQueueSimulation,
-    max_days_open: int,
-    excluded_count: int,
-    total_open_cases: int,
-) -> None:
+def _render_title() -> None:
     title_col, reset_col = st.columns([0.78, 0.22], vertical_alignment="center")
 
     with title_col:
@@ -265,60 +268,53 @@ def _render_header(
         st.button(
             "Reset simulation",
             on_click=_reset_simulation,
-            args=(simulation,),
             width="stretch",
         )
 
+
+def _render_overview() -> None:
     st.markdown(
-        f"""
-        <div class="project-description">
-        This project simulates a fair queue for Boston 311 service requests. It ranks urgent
-        requests first, then gives priority to neighborhoods that currently wait longer than
-        others. As cases are completed, the goal is to reduce average delays over time for
-        neighborhoods that used to wait longer. Open cases beyond {max_days_open} days are
-        treated as stale and excluded because very long-open records are often resolved but
-        not marked closed, especially Parking Enforcement. {excluded_count:,} of
-        {total_open_cases:,} open cases are excluded by the current day limit.
-        </div>
-        """,
+        (
+            '<div class="project-description">'
+            "This project simulates a fair queue for Boston 311 service requests. "
+            "It ranks urgent requests first, then gives priority to neighborhoods "
+            "that currently wait longer than others. As cases are completed, the goal "
+            "is to reduce average delays over time for neighborhoods that used to wait "
+            "longer. The app uses a prepared 2026 sample with open, queue-eligible "
+            f"cases capped at {APP_DATA_MAX_DAYS_OPEN} days open, so stale records do "
+            "not dominate the simulation."
+            "</div>"
+        ),
         unsafe_allow_html=True,
     )
 
 
-def _data_path_input() -> Path:
-    default_path = DEFAULT_DATA_PATH if DEFAULT_DATA_PATH.exists() else SAMPLE_DATA_PATH
-    path_text = st.sidebar.text_input("CSV path", value=str(default_path))
-    return Path(path_text).expanduser()
-
-
-def _active_case_limit_input() -> int:
-    return st.sidebar.slider(
-        "Open case day limit",
-        min_value=30,
-        max_value=365,
-        value=DEFAULT_ACTIVE_CASE_MAX_DAYS_OPEN,
-        step=5,
-        help="Open records beyond this many days are treated as stale so they do not dominate the queue.",
-    )
+def _render_overview_metrics(
+    active_df: pd.DataFrame,
+) -> None:
+    neighborhood_count = active_df["Neighborhood"].nunique()
+    category_count = active_df["Category"].nunique()
+    metrics = [
+        ("Neighborhoods represented", f"{neighborhood_count:,}"),
+        ("Queue cases loaded", f"{len(active_df):,}"),
+        ("Categories represented", f"{category_count:,}"),
+        ("Prepared day cap", f"{APP_DATA_MAX_DAYS_OPEN} days"),
+    ]
+    _render_metric_cards(metrics)
 
 
 @st.cache_data(show_spinner="Loading 311 data...")
-def _load_initial_cases(data_path: Path, max_days_open: int) -> tuple[pd.DataFrame, int]:
+def _load_initial_cases(data_path: Path) -> pd.DataFrame:
     loader = DataLoader(data_path)
-    df = loader.load()
-    total_open_cases = len(loader.cases_with_status(df, "Open"))
-    return (
-        loader.get_active_cases(max_days_open=max_days_open),
-        total_open_cases,
-    )
+    loader.load()
+    return loader.get_active_cases()
 
 
 def _get_simulation(
     data_path: Path,
-    max_days_open: int,
     active_df: pd.DataFrame,
 ) -> FairQueueSimulation:
-    state_key = f"{data_path}:{max_days_open}"
+    state_key = str(data_path)
     if st.session_state.get("simulation_data_path") != state_key:
         st.session_state.simulation_data_path = state_key
         st.session_state.simulation = FairQueueSimulation(active_df)
@@ -337,6 +333,13 @@ def _render_summary(simulation: FairQueueSimulation) -> None:
         ("Completed in simulation", f"{summary['completed_cases']:,}"),
         ("Active avg days open", _format_metric(current_tracker.citywide_avg_days_open)),
     ]
+    _render_metric_cards(metrics)
+
+    if not st.session_state.last_completed.empty:
+        st.success(f"Completed {len(st.session_state.last_completed):,} cases in this simulation step.")
+
+
+def _render_metric_cards(metrics: list[tuple[str, str]]) -> None:
     cards = "\n".join(
         f'<div class="metric-card">'
         f'<div class="metric-label">{html.escape(label)}</div>'
@@ -345,9 +348,6 @@ def _render_summary(simulation: FairQueueSimulation) -> None:
         for label, value in metrics
     )
     st.markdown(f'<div class="metric-grid">{cards}</div>', unsafe_allow_html=True)
-
-    if not st.session_state.last_completed.empty:
-        st.success(f"Completed {len(st.session_state.last_completed):,} cases in this simulation step.")
 
 
 def _render_neighborhood_impact(simulation: FairQueueSimulation) -> None:
@@ -360,13 +360,6 @@ def _render_neighborhood_impact(simulation: FairQueueSimulation) -> None:
 
     st.write("Average days open before and after the simulation")
     _render_neighborhood_bar_chart(comparison)
-
-    st.write("Neighborhood delay table")
-    st.dataframe(
-        comparison,
-        hide_index=True,
-        width="stretch",
-    )
 
 
 def _render_map(simulation: FairQueueSimulation) -> None:
@@ -498,8 +491,10 @@ def _complete_next_cases(simulation: FairQueueSimulation) -> None:
     st.session_state.last_completed = simulation.complete_next_cases(COMPLETION_COUNT)
 
 
-def _reset_simulation(simulation: FairQueueSimulation) -> None:
-    simulation.reset()
+def _reset_simulation() -> None:
+    simulation = st.session_state.get("simulation")
+    if simulation is not None:
+        simulation.reset()
     st.session_state.last_completed = pd.DataFrame()
 
 
@@ -508,30 +503,53 @@ def _render_neighborhood_bar_chart(comparison: pd.DataFrame) -> None:
         st.info("No neighborhood data available.")
         return
 
-    chart_df = comparison.sort_values("Initial avg days open", ascending=True)
+    chart_df = comparison.sort_values(
+        ["Current delay boost", "Current avg days open"],
+        ascending=[False, False],
+    ).head(12)
+    chart_df = chart_df.sort_values("Initial avg days open", ascending=True)
     neighborhoods = chart_df["Neighborhood"].tolist()
     y_positions = range(len(chart_df))
 
-    fig_height = max(5, len(chart_df) * 0.42)
-    fig, ax = plt.subplots(figsize=(11, fig_height))
+    fig_height = max(4.2, len(chart_df) * 0.34)
+    fig, ax = plt.subplots(figsize=(10, fig_height))
     ax.barh(
         [position - 0.18 for position in y_positions],
         chart_df["Initial avg days open"],
-        height=0.34,
+        height=0.3,
         color=AZURE_HORIZON,
         label="Initial",
     )
-    ax.barh(
+    current_bars = ax.barh(
         [position + 0.18 for position in y_positions],
         chart_df["Current avg days open"],
-        height=0.34,
+        height=0.3,
         color=PUMPKIN_VIBE,
         label="Current",
     )
+    max_value = max(
+        chart_df["Initial avg days open"].max(),
+        chart_df["Current avg days open"].max(),
+        1,
+    )
+    for bar, change in zip(current_bars, chart_df["Avg days change"]):
+        x_position = bar.get_width() + max_value * 0.015
+        y_position = bar.get_y() + bar.get_height() / 2
+        ax.text(
+            x_position,
+            y_position,
+            change,
+            va="center",
+            color=BLUE_DUNE,
+            fontsize=9,
+            fontweight="bold",
+        )
+
     ax.set_yticks(list(y_positions), neighborhoods)
     ax.set_xlabel("Average days open")
-    ax.set_ylabel("Neighborhood")
-    ax.legend()
+    ax.set_ylabel("")
+    ax.set_xlim(right=max_value * 1.18)
+    ax.legend(loc="lower right")
     ax.grid(axis="x", color=MISTY_CANVAS, alpha=0.55)
     ax.set_axisbelow(True)
     ax.set_facecolor(LIGHT_CANVAS)
@@ -555,7 +573,7 @@ def _case_map_figure(queue_df: pd.DataFrame) -> plt.Figure:
         vmin=0,
         vmax=color_cap,
         s=7,
-        alpha=0.28,
+        alpha=0.42,
         edgecolors="none",
         zorder=2,
     )
